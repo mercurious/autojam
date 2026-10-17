@@ -1,0 +1,7 @@
+# Build environment for the autojam binary. ubuntu:24.04 has glibc 2.39 and libstdc++ GLIBCXX_3.4.33; ROCKNIX
+# 20261001 has glibc 2.41 and GLIBCXX_3.4.34, so what is built here runs there. SDL2 2.30 here, 2.32 on the
+# device (same ABI); libpulse-simple 16 here, the device ships libpulse-simple.so.0 (PipeWire's Pulse protocol).
+FROM docker.io/library/ubuntu:24.04
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+      build-essential cmake ninja-build pkg-config git ca-certificates curl \
+      libsdl2-dev libsdl2-ttf-dev libpulse-dev libasound2-dev >/dev/null && rm -rf /var/lib/apt/lists/*

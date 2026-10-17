@@ -1,0 +1,5 @@
+build/work/
+dist/
+*.bmp
+*.wav
+__pycache__/
