@@ -17,6 +17,7 @@
 
 struct BrainState {
   bool llmOk = false, ttsOk = false, llmLoading = false, ears = false, auto_ = true;
+  bool canHear = true;                       // llama-server has an audio projector (/props modalities.audio)
   std::string phase = "idle", error, model, lastTitle; int tokens = 0; float seconds = 0; int plans = 0, failures = 0;
   std::vector<std::string> voices; int voiceIdx = 0; std::string voice;
   std::vector<std::string> steering;        // what the humans asked for since the last plan

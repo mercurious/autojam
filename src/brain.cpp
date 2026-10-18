@@ -48,16 +48,17 @@ void Brain::speak(const std::string& text, const std::vector<int>& melody, bool 
 }
 
 void Brain::health() {
-  std::string body; bool llm = false, loading = false, tts = false; std::string model;
+  std::string body; bool llm = false, loading = false, tts = false, hearKnown = false, canHear = true; std::string model;
   http::Response r;
   if (http::Client::request(opts.llmUrl, "GET", "/health", "", r, 800)) { body = r.all(2000); llm = r.status == 200; loading = r.status == 503; }
   if (llm) {
     std::string m; if (http::Client::get(opts.llmUrl, "/v1/models", m, 2000)) { json::Value v; if (json::parse(m, v)) { auto& d = v.arrOf("data"); if (!d.empty()) { model = d[0].strOr("id", ""); size_t s = model.find_last_of('/'); if (s != std::string::npos) model = model.substr(s + 1); } } }
+    std::string p; if (http::Client::get(opts.llmUrl, "/props", p, 2000)) { json::Value v; if (json::parse(p, v)) if (const json::Value* m = v.get("modalities")) { canHear = m->boolOr("audio", false); hearKnown = true; } }
   }
   http::Response t;
   if (http::Client::request(opts.ttsUrl, "GET", "/health", "", t, 800)) { t.all(2000); tts = t.status == 200; }
   std::lock_guard<std::mutex> g(mu);
-  st.llmOk = llm; st.llmLoading = loading; st.ttsOk = tts; if (!model.empty()) st.model = model;
+  st.llmOk = llm; st.llmLoading = loading; st.ttsOk = tts; if (!model.empty()) st.model = model; if (hearKnown) st.canHear = canHear;
   if (!llm && st.phase == "idle") st.phase = loading ? "model loading" : "no model server";
   else if (llm && (st.phase == "model loading" || st.phase == "no model server")) st.phase = "idle";
 }
@@ -239,7 +240,7 @@ bool Brain::plan(const Job& j) {
   Value body = Value::obj(); Value msgs = Value::arr();
   Value sys = Value::obj(); sys["role"] = Value::str("system"); sys["content"] = Value::str(systemPrompt(j.full)); msgs.push(sys);
   Value usr = Value::obj(); usr["role"] = Value::str("user");
-  bool ears = opts.ears && j.full && !h.silence;
+  bool ears = opts.ears && state().canHear && j.full && !h.silence;   // without the mmproj llama-server answers 500
   if (ears) {
     Value parts = Value::arr();
     Value audio = Value::obj(); audio["type"] = Value::str("input_audio"); Value ia = Value::obj(); ia["data"] = Value::str(clipWavBase64()); ia["format"] = Value::str("wav"); audio["input_audio"] = ia; parts.push(audio);

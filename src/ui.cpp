@@ -30,9 +30,9 @@ void Panel::build() {
       if (i == 6) { Command k; k.type = Command::Density; k.a = P_LEAD; k.b = -3; engine.send(k); Command f; f.type = Command::Follow; f.a = 1; engine.send(f); }
       if (i == 7) { Command k; k.type = Command::Density; k.a = P_LEAD; k.b = 3; engine.send(k); }
       if (i == 9) { Command k; k.type = Command::Feel; k.a = 1; engine.send(k); }
-      if (i == 8 || i == 11) brain.requestPlan(true); else steer(ask);
-      if (i == 8 || i == 11) say(i == 8 ? "Asking Gemma for new lyrics" : "Asking Gemma to surprise us");
-      if (i == 8) brain.steer(ask); if (i == 11) brain.steer(ask);
+      // lyrics only come with a full plan: steer first so that plan carries the request, not a quick one after it
+      if (i == 8 || i == 11) { brain.steer(ask); brain.requestPlan(true); say(i == 8 ? "Asking Gemma for new lyrics" : "Asking Gemma to surprise us"); }
+      else steer(ask);
     };
     ctls.push_back(c);
   }
@@ -46,7 +46,7 @@ void Panel::build() {
   y += 76;
   toggle("gvoice", "Gemma sings", 0, [this] { Command c; c.type = Command::Mute; c.a = P_VOICE; c.b = -1; engine.send(c); }, [this] { return !b.partMute[P_VOICE]; });
   toggle("mictune", "Tune my mic", 1, [this] { Command c; c.type = Command::MicTune; c.a = -1; engine.send(c); if (!b.micTune) say("Mic through the tuner: use headphones, speakers will feed back"); }, [this] { return b.micTune; });
-  toggle("ears", "Gemma's ears", 2, [this] { brain.toggleEars(); say(s.ears ? "Gemma reads the measurements only" : "Gemma also gets 8 s of audio with each plan"); }, [this] { return s.ears; });
+  toggle("ears", "Gemma's ears", 2, [this] { toggleEars(); }, [this] { return s.ears && s.canHear; });
   y += 76;
   // sliders: autotune amount, speed, master
   auto slider = [&](const char* id, const char* label, int col, int span, std::function<void(int)> act, std::function<float()> val, std::function<std::string()> txt) {
@@ -115,7 +115,7 @@ void Panel::handleEvent(const SDL_Event& ev) {
         case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: if (down) brain.nextVoice(-1); break;
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: if (down) brain.nextVoice(1); break;
         case SDL_CONTROLLER_BUTTON_LEFTSTICK: if (down) { Command c; c.type = Command::MicTune; c.a = -1; engine.send(c); } break;
-        case SDL_CONTROLLER_BUTTON_RIGHTSTICK: if (down) brain.toggleEars(); break;
+        case SDL_CONTROLLER_BUTTON_RIGHTSTICK: if (down) toggleEars(); break;
         case SDL_CONTROLLER_BUTTON_START: startDown = down; if (down) { if (selectDown) quit = true; else { Command c; c.type = b.playing ? Command::Stop : Command::Play; engine.send(c); } } break;
         case SDL_CONTROLLER_BUTTON_BACK: selectDown = down; if (down) { if (startDown) quit = true; else if (onRepickMic) onRepickMic(); } break;
         case SDL_CONTROLLER_BUTTON_GUIDE: if (down) quit = true; break;

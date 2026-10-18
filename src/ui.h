@@ -42,4 +42,8 @@ private:
   void drawHearing(); void drawBand(); void drawSteer(); void drawTop(); void drawBottom();
   void drawCtl(const Ctl& c, bool focused);
   void steer(const std::string& what) { brain.steer(what); say("Gemma: " + what); }
+  void toggleEars() {
+    if (!s.canHear) { say("No ears: the model server runs without the audio projector (mmproj, 10 GB devices)"); return; }
+    brain.toggleEars(); say(s.ears ? "Gemma reads the measurements only" : "Gemma also gets 8 s of audio with each plan");
+  }
 };
