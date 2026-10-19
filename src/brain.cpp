@@ -41,8 +41,8 @@ void Brain::nextVoice(int delta) {
   st.voiceIdx = ((st.voiceIdx + delta) % (int)st.voices.size() + (int)st.voices.size()) % (int)st.voices.size();
   st.voice = st.voices[st.voiceIdx];
 }
-void Brain::speak(const std::string& text, const std::vector<int>& melody, bool sung) {
-  { std::lock_guard<std::mutex> g(jobMu); says.push_back({text, melody, sung}); }
+void Brain::speak(const std::string& text, const std::vector<int>& melody, bool sung, int verse, int of) {
+  { std::lock_guard<std::mutex> g(jobMu); says.push_back({text, melody, sung, verse, of}); }
   { std::lock_guard<std::mutex> g(mu); st.ttsQueued = (int)says.size(); }
   scv.notify_all();
 }
@@ -123,9 +123,11 @@ std::string Brain::systemPrompt(bool full) const {
   if (full) s +=
        "- hear: in a few words each, the genre, the mood and the instruments you believe you hear (from the measurements"
        " and the audio if given).\n"
-       "- lyrics: 0 to 4 short lines (4 to 9 words, one breath each) to be sung over the jam, each with a melody of 2 to 8 "
-       "scale degrees spread evenly over the line. Rhyme lightly, fit the mood, original words only, nothing hateful. "
-       "If the humans asked for new lyrics, give 3 or 4; otherwise 0 to 2.\n"
+       "- lyrics: the verse you sing over the jam, 4 short lines (4 to 9 words, one breath each), each with a melody of 3 "
+       "to 8 scale degrees spread evenly over the line. The verse repeats until you write new lyrics, so make it a song: "
+       "a hook the humans can sing along to, light rhymes, the mood of the room, original words only, nothing hateful. "
+       "Write a new verse when none is being sung, when the humans ask for new lyrics or when the music has moved on; "
+       "otherwise give none and your verse goes on.\n"
        "- voice: the name of the Pocket TTS voice that sings, from the list given.\n"
        "- say: one short friendly sentence spoken to the humans about what you hear or are about to do (or empty).\n"
        "- title: a name for this phrase of the jam.\n";
@@ -273,7 +275,7 @@ bool Brain::plan(const Job& j) {
   if (engine) engine->applyPlan(p);
   BrainState s = state();
   if (j.full && !p.voice.empty() && std::find(s.voices.begin(), s.voices.end(), p.voice) != s.voices.end()) { std::lock_guard<std::mutex> g(mu); st.voice = p.voice; st.voiceIdx = (int)(std::find(st.voices.begin(), st.voices.end(), p.voice) - st.voices.begin()); }
-  if (j.full) { if (!p.say.empty()) speak(p.say, {}, false); for (auto& l : p.lyrics) speak(l.text, l.melody, true); if (!p.title.empty()) { titles.push_back(p.title); while (titles.size() > 6) titles.pop_front(); } }
+  if (j.full) { if (!p.say.empty()) speak(p.say, {}, false); int verse = ++verses; for (auto& l : p.lyrics) speak(l.text, l.melody, true, verse, (int)p.lyrics.size()); if (!p.title.empty()) { titles.push_back(p.title); while (titles.size() > 6) titles.pop_front(); } }
   std::lock_guard<std::mutex> g(mu);
   st.phase = "idle"; st.tokens = tokens; st.seconds = p.seconds; st.plans++; st.lastRaw = text; st.steering.clear();
   if (j.full) { st.lastTitle = p.title; st.lastSay = p.say; st.lastHear = p.hearGenre + (p.hearMood.empty() ? "" : " · " + p.hearMood) + (p.hearInstruments.empty() ? "" : " · " + p.hearInstruments); }
@@ -297,7 +299,7 @@ void Brain::speakerLoop() {
     size_t a = 0, b = n; const int thr = 180; while (a < n && abs(s16[a]) < thr) a++; while (b > a && abs(s16[b - 1]) < thr) b--;
     a = a > 1440 ? a - 1440 : 0; b = std::min(n, b + 1440);
     if (b <= a) continue;
-    VoiceLine line; line.text = s.text; line.melody = s.melody; line.sung = s.sung;
+    VoiceLine line; line.text = s.text; line.melody = s.melody; line.sung = s.sung; line.verse = s.verse; line.of = s.of;
     dsp::upsample2x(&s16[a], (int)(b - a), line.pcm);
     if (engine) { if (s.sung) engine->queueLine(std::move(line)); else engine->speakNow(std::move(line)); }
   }

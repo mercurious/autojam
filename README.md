@@ -80,13 +80,14 @@ it follows the beat and the chord the listener hears, and never waits for the mo
 - A **full plan** (about 300-600 tokens, 40-90 s on E4B; half that with `AJ_MODEL=e2b`) every two minutes while
   the band plays (`AJ_AUTO`), or when you press X / Ask Gemma / New lyrics / Surprise me: style, feel, energy,
   the four parts' density, a motif, up to four chords for when the room is silent (or to take over with
-  `follow=false`), swing, a direction, what it believes it hears (genre, mood, instruments), 0-4 lyric lines each
-  with a melody as scale degrees, the voice, a spoken sentence and a title.
+  `follow=false`), swing, a direction, what it believes it hears (genre, mood, instruments), a verse of 4 lyric lines
+  each with a melody as scale degrees (or none, to keep the current verse), the voice, a spoken sentence and a title.
 - A **quick plan** (about 150 tokens) after any steering press, honouring the request in the numbers.
 
 Plans are JSON constrained by a schema (llama.cpp's `json_schema`), so they always parse. They are applied on
 the next bar. Lyrics go to Pocket TTS line by line; each line starts on a bar and is sung through the tuner,
-forced onto its melody in the key of the jam, so spoken TTS comes out sung.
+forced onto its melody in the key of the jam, so spoken TTS comes out sung. The verse repeats, with a two-bar breath
+between rounds, until Gemma writes a new one, so a song keeps going between plans.
 
 **Gemma's ears.** The Gemma 4 E4B audio projector (`gemma-4-E4B-it-mmproj.gguf`, in the shared models directory
 when Retro Voice Chat installed it) lets the model hear the last eight seconds of the room with each full plan,

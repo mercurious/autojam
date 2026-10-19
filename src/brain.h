@@ -35,7 +35,7 @@ public:
   void setAuto(bool on) { autoMode = on; }
   void toggleEars() { opts.ears = !opts.ears; }
   void nextVoice(int delta);
-  void speak(const std::string& text, const std::vector<int>& melody, bool sung);   // queue for TTS
+  void speak(const std::string& text, const std::vector<int>& melody, bool sung, int verse = 0, int of = 1);   // queue for TTS
   BrainState state() const { std::lock_guard<std::mutex> g(mu); return st; }
   std::string lastPlanJson() const { std::lock_guard<std::mutex> g(mu); return st.lastRaw; }
 private:
@@ -43,7 +43,7 @@ private:
   mutable std::mutex mu; BrainState st; std::atomic<bool> run{false}, autoMode{true};
   std::thread planner, speaker; std::condition_variable cv, scv; std::mutex jobMu;
   struct Job { bool full; std::vector<std::string> steering; }; std::deque<Job> jobs; std::vector<std::string> pendingSteer; double steerDue = 0;
-  struct Say { std::string text; std::vector<int> melody; bool sung; }; std::deque<Say> says;
+  struct Say { std::string text; std::vector<int> melody; bool sung; int verse, of; }; std::deque<Say> says; int verses = 0;
   std::vector<float> earRing; std::atomic<size_t> earW{0};
   double lastAuto = 0; std::deque<std::string> titles;
   void plannerLoop(); void speakerLoop();

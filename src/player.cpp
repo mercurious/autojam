@@ -22,7 +22,12 @@ void Engine::micIn(const float* mono, int n) {
   for (int i = 0; i < n; i++) { micRing[w & (micRing.size() - 1)] = mono[i]; w++; }
   micW.store(w, std::memory_order_release);
 }
-void Engine::queueLine(VoiceLine&& l) { std::lock_guard<std::mutex> g(lineMu); lines.push_back(std::move(l)); }
+void Engine::queueLine(VoiceLine&& l) {
+  auto p = std::make_shared<const VoiceLine>(std::move(l));
+  std::lock_guard<std::mutex> g(lineMu);
+  if (p->verse != verseId) { verse.clear(); verseId = p->verse; versePos = 0; }   // a new verse replaces the one on repeat
+  verse.push_back(p); lines.push_back(p);
+}
 void Engine::speakNow(VoiceLine&& l) { std::lock_guard<std::mutex> g(lineMu); spoken.push_back(std::move(l)); }
 
 std::string Engine::describePlaying() const {
@@ -34,6 +39,7 @@ std::string Engine::describePlaying() const {
   d += s.following ? ", following the humans' chords" : ", on its own chords";
   if (s.chordRoot >= 0) d += ", now on " + chordName(s.chordRoot, s.chordType);
   if (s.linesQueued) d += ", " + std::to_string(s.linesQueued) + " lyric lines still to sing";
+  if (s.verseLines) d += ", your verse of " + std::to_string(s.verseLines) + " lines repeats until new lyrics";
   return d;
 }
 
@@ -52,8 +58,8 @@ void Engine::handle(const Command& c) {
     case Command::MicTune: micTune = c.a < 0 ? !micTune : c.a != 0; break;
     case Command::Autotune: atAmount = dsp::clamp(atAmount + c.f, 0.0f, 1.0f); if (c.a) atSpeed = dsp::clamp(atSpeed + c.a * 0.1f, 0.0f, 1.0f); break;
     case Command::Transpose: transpose = std::max(-12, std::min(12, transpose + c.a)); break;
-    case Command::SkipLine: curActive = false; break;
-    case Command::ClearLines: { std::lock_guard<std::mutex> g(lineMu); lines.clear(); curActive = false; } break;
+    case Command::SkipLine: curActive = false; lyricEndBar = bar; break;
+    case Command::ClearLines: { std::lock_guard<std::mutex> g(lineMu); lines.clear(); verse.clear(); verseId = -1; curActive = false; } break;
     case Command::Style: plan.style = STYLES[((plan.styleIndex() + c.a) % NUM_STYLES + NUM_STYLES) % NUM_STYLES]; applyPlanNow(plan); break;
     case Command::Feel: plan.feel = FEELS[((plan.feelIndex() + c.a) % NUM_FEELS + NUM_FEELS) % NUM_FEELS]; break;
     case Command::Swing: swing = std::max(0, std::min(40, swing + c.a)); break;
@@ -259,22 +265,31 @@ void Engine::tick(int step) {
 
 void Engine::voiceSample(float& l, float& r) {
   float v = 0;
-  // sung lines: one at a time, each starting on a bar
+  // sung lines: one at a time, each starting on a bar; new lines first, then the verse comes round again after a
+  // two-bar breath (four, line by line, if some of its lines never came back from TTS)
   if (!curActive) {
     int step = ((int)floor(beatPos * 4.0)) & 15;
-    if (step == 0 && lastStep != 0) { std::lock_guard<std::mutex> g(lineMu); if (!lines.empty() && cur.text != lines.front().text) { } if (!lines.empty()) { cur = std::move(lines.front()); lines.pop_front(); curPos = 0; curActive = true; lyricBar = bar; } }
+    if (step == 0 && lastStep != 0) {
+      std::lock_guard<std::mutex> g(lineMu); std::shared_ptr<const VoiceLine> next;
+      if (!lines.empty()) { next = lines.front(); lines.pop_front(); }
+      else if (!verse.empty()) {
+        bool whole = (int)verse.size() >= verse[0]->of; size_t i = versePos % verse.size();
+        if (bar < lyricEndBar || bar - lyricEndBar >= (whole ? (i == 0 ? 2 : 0) : 4)) { next = verse[i]; versePos++; }
+      }
+      if (next) { cur = next; curPos = 0; curActive = true; lyricBar = bar; }
+    }
   }
   if (curActive) {
-    if (curPos < cur.pcm.size()) {
-      float s = cur.pcm[curPos++];
+    if (curPos < cur->pcm.size()) {
+      float s = cur->pcm[curPos++];
       float forced = -1;
-      if (!cur.melody.empty() && cur.sung) {
-        size_t idx = std::min(cur.melody.size() - 1, curPos * cur.melody.size() / std::max<size_t>(1, cur.pcm.size()));
+      if (!cur->melody.empty() && cur->sung) {
+        size_t idx = std::min(cur->melody.size() - 1, curPos * cur->melody.size() / std::max<size_t>(1, cur->pcm.size()));
         int tonic = (keyPc >= 0 ? keyPc : 0) + 60; if (tonic > 66) tonic -= 12;
-        lyricNote = degreeToMidi(tonic, mode, cur.melody[idx]) + transpose; forced = (float)lyricNote;
+        lyricNote = degreeToMidi(tonic, mode, cur->melody[idx]) + transpose; forced = (float)lyricNote;
       }
-      v += tuneLine.process(s, keyMask(), forced, cur.sung ? atAmount : 0.35f, cur.sung ? atSpeed : 0.2f, 0) * 1.3f;
-    } else { curActive = false; lyricNote = -1; }
+      v += tuneLine.process(s, keyMask(), forced, cur->sung ? atAmount : 0.35f, cur->sung ? atSpeed : 0.2f, 0) * 1.3f;
+    } else { curActive = false; lyricNote = -1; lyricEndBar = bar; }
   }
   // spoken comments (not sung), as soon as they arrive
   if (!sayActive) { std::lock_guard<std::mutex> g(lineMu); if (!spoken.empty()) { say = std::move(spoken.front()); spoken.pop_front(); sayPos = 0; sayActive = true; } }
@@ -331,8 +346,8 @@ void Engine::publish() {
   snap.chordRoot = chordRoot; snap.chordType = chordType; snap.key = keyPc; snap.mode = mode;
   for (int p = 0; p < NUM_PARTS; p++) { snap.partLevel[p] = std::min(1.0f, level[p] * 2.0f); snap.partMute[p] = mute[p]; snap.volume[p] = volume[p]; }
   for (int p = 0; p < 4; p++) snap.density[p] = density[p];
-  snap.lyricNow = curActive ? cur.text : ""; snap.lyricProgress = curActive && !cur.pcm.empty() ? (float)curPos / cur.pcm.size() : 0; snap.lyricNote = curActive ? lyricNote : -1;
-  { std::unique_lock<std::mutex> l(lineMu, std::try_to_lock); if (l.owns_lock()) { snap.linesQueued = (int)lines.size(); snap.lyricNext = lines.empty() ? "" : lines.front().text; } }
+  snap.lyricNow = curActive ? cur->text : ""; snap.lyricProgress = curActive && !cur->pcm.empty() ? (float)curPos / cur->pcm.size() : 0; snap.lyricNote = curActive ? lyricNote : -1;
+  { std::unique_lock<std::mutex> l(lineMu, std::try_to_lock); if (l.owns_lock()) { snap.linesQueued = (int)lines.size(); snap.verseLines = (int)verse.size(); snap.lyricNext = !lines.empty() ? lines.front()->text : (verse.empty() ? "" : verse[versePos % verse.size()]->text); } }
   snap.voiceDetected = tuneLine.detectedMidi; snap.voiceTarget = tuneLine.targetMidi; snap.autotuneAmount = atAmount; snap.autotuneSpeed = atSpeed; snap.transpose = transpose;
   snap.plan = plan; snap.plansApplied = plansApplied; snap.master = master; snap.outPeak = outPeak; snap.swing = swing;
   snap.tempoSource = tempoMode == 0 ? "free" : (tempoMode == 2 ? "tapped" : (hear.tempoLocked ? "the room" : "listening"));

@@ -291,7 +291,7 @@ void Panel::drawBand() {
     int lines = gfx.wrapped(b.lyricNow, X + 20, 672, CW - 40, FG, Gfx::F_BOLD, 2);
     int uy = 672 + lines * gfx.textHeight(Gfx::F_BOLD) + 6; gfx.meter(X + 20, uy, CW - 40, 6, b.lyricProgress, VOICE, OFF);
     if (b.lyricNote >= 0) gfx.text("singing " + theory::midiName(b.lyricNote), X + CW - 24, 646, VOICE, Gfx::F_TINY, 2);
-  } else gfx.text(s.ttsOk ? (b.linesQueued ? "next line starts on the bar…" : "no lyrics queued · New lyrics asks Gemma") : "Pocket TTS is not running", X + 20, 672, MUTED, Gfx::F_SMALL);
+  } else gfx.text(s.ttsOk ? (b.linesQueued ? "next line starts on the bar…" : (b.verseLines ? "the verse comes round again…" : "no lyrics queued · New lyrics asks Gemma")) : "Pocket TTS is not running", X + 20, 672, MUTED, Gfx::F_SMALL);
   if (!b.lyricNext.empty()) { gfx.text("next:", X + 20, 770, MUTED, Gfx::F_TINY); gfx.wrapped(b.lyricNext, X + 70, 768, CW - 90, dim(FG, 0.7f), Gfx::F_SMALL, 2); }
   if (b.linesQueued > 1) gfx.text("+" + std::to_string(b.linesQueued - 1) + " more", X + CW - 24, 770, MUTED, Gfx::F_TINY, 2);
   // melody of the current plan's lyrics, as dots
