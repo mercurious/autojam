@@ -35,6 +35,13 @@ void Analysis::tap() {
   beatAnchor = now; barOffset = (barOffset + 1) & 3; beatCount = 0;
 }
 
+void Analysis::link(const LinkInfo& l) {
+  // the beacon's next downbeat, put on the audio timeline: `samples` lags the room by the capture path as the
+  // measured beats do, and the player compensates for that, so the same offset holds here
+  std::lock_guard<std::mutex> g(mu);
+  double now = samples / RATE; lk = l; linkSeen = now; linkAnchor = now + l.nextBarIn - (JamLink::steadyNow() - l.at);
+}
+
 void Analysis::boostNotes(uint16_t pcMask, float w) { std::lock_guard<std::mutex> l(mu); midiBoost = pcMask; midiBoostW = w; }
 
 // read the last `n` samples of the ring into dst
@@ -81,15 +88,20 @@ void Analysis::tempo() {
   float mean = 0; for (float v : x) mean += v; mean /= n;
   for (auto& v : x) v = std::max(0.0f, v - mean);
   float e0 = 0; for (float v : x) e0 += v * v; if (e0 < 1e-9f) { beatConf *= 0.9f; return; }
-  int lagMin = (int)(fps * 60.0f / 220.0f), lagMax = (int)(fps * 60.0f / 50.0f);
-  std::vector<float> ac(lagMax + 1, 0.0f);
-  for (int lag = lagMin; lag <= lagMax; lag++) { float s = 0; for (int i = lag; i < n; i++) s += x[i] * x[i - lag]; ac[lag] = s / e0; }
-  // a comb over the period and its doubles, with a preference for 80-160 BPM
+  int lagMin = (int)(fps * 60.0f / 220.0f), lagMax = (int)(fps * 60.0f / 50.0f), acMax = std::max(lagMax, n / 2);
+  std::vector<float> ac(acMax + 1, 0.0f);
+  for (int lag = lagMin; lag <= acMax; lag++) { float s = 0; for (int i = lag; i < n; i++) s += x[i] * x[i - lag]; ac[lag] = s / e0; }
+  // a comb over the period, its double and the bar (four beats), with a preference for 80-160 BPM. The bar
+  // matters for loop-built beats (trap, jerk): their hits are syncopated, but the pattern repeats every bar, and
+  // a 4:3 impostor (triplet hats) gets no support there, its four "beats" being three of the real ones
   int bestLag = -1; float best = -1, second = -1;
   for (int lag = lagMin; lag <= lagMax; lag++) {
     float bpm = fps * 60.0f / lag;
     float pref = expf(-0.5f * powf(log2f(bpm / 115.0f) / 0.55f, 2.0f));
-    float s = ac[lag]; if (lag * 2 <= lagMax) s += 0.5f * ac[lag * 2]; if (lag * 4 <= lagMax) s += 0.25f * ac[lag * 4];
+    // the multiples of an integer lag drift from the true ones (half a frame off is two at the bar): take the
+    // peak near each, the onset peaks being only a frame or two wide
+    auto near = [&](int c, int w) { float m = 0; for (int k = std::max(lagMin, c - w); k <= std::min(acMax, c + w); k++) m = std::max(m, ac[k]); return m; };
+    float s = ac[lag]; if (lag * 2 <= acMax) s += 0.5f * near(lag * 2, 1); if (lag * 4 <= acMax) s += 0.25f * near(lag * 4, 2);
     s *= 0.6f + 0.4f * pref;
     if (s > best) { second = best; best = s; bestLag = lag; } else if (s > second) second = s;
   }
@@ -104,8 +116,13 @@ void Analysis::tempo() {
   bpmHist.push_back(bpm); while (bpmHist.size() > 6) bpmHist.pop_front();
   std::vector<float> h(bpmHist.begin(), bpmHist.end()); std::sort(h.begin(), h.end());
   float med = h[h.size() / 2];
-  // octave hysteresis: keep the locked tempo if the new one is its double or half
-  if (locked && bpmEst > 0) { if (fabsf(med * 2 - bpmEst) < bpmEst * 0.06f) med *= 2; else if (fabsf(med / 2 - bpmEst) < bpmEst * 0.06f) med /= 2; }
+  // hysteresis: keep the locked tempo while the new one is a simple ratio of it (double, half, or the 4:3 and 3:2
+  // of triplet figures), the usual ways a beat tracker slips; if the ratio holds for 3 s it was the lock that
+  // was wrong, and the new tempo is taken
+  bool slip = false;
+  if (locked && bpmEst > 0) for (float r : {2.0f, 0.5f, 4.0f / 3, 0.75f, 1.5f, 2.0f / 3}) if (fabsf(med - bpmEst * r) < bpmEst * r * 0.05f) { slip = true; break; }
+  slips = slip ? slips + 1 : 0;
+  if (slip && slips < 6) med = bpmEst; else if (slip) slips = 0;
   if (!locked || fabsf(med - bpmEst) > bpmEst * 0.12f) { bpmEst = med; } else bpmEst += 0.3f * (med - bpmEst);
   beatConf += 0.4f * (conf - beatConf);
   locked = beatConf > 0.25f && bpmHist.size() >= 3;
@@ -261,4 +278,24 @@ void Analysis::publish() {
   snap.key = keyPc; snap.minorKey = keyMinor; snap.keyConf = keyConf;
   if (snap.silence && curRoot >= 0) { snap.history.push_back({curRoot, curType, chordStart, now}); while (snap.history.size() > 16) snap.history.erase(snap.history.begin()); curRoot = -1; candCount = 0; }
   snap.chordRoot = curRoot; snap.chordType = curType; snap.chordConf = std::min(1.0f, std::max(0.0f, curScore)); snap.chordSince = chordStart;
+  snap.mode = -1; snap.linked = false;
+  // the jam link, while it is fresh: Rap Machine's own tempo, downbeat, key, mode and chord, not the air's
+  if (lk.playing && lk.bpm > 0 && now - linkSeen < 3.0) {
+    double period = 60.0 / lk.bpm, bar = 4 * period, since = now - linkAnchor, beats = floor(since / period);
+    snap.linked = true; snap.bpm = lk.bpm; snap.period = period; snap.tempoLocked = true; snap.beatConf = 1;
+    snap.lastBeat = linkAnchor + beats * period; snap.beatInBar = (int)(((long long)beats % 4 + 4) % 4); snap.barConf = 1;
+    snap.key = lk.root; snap.mode = lk.mode; snap.minorKey = lk.mode >= 0 && theory::modes()[lk.mode].minorish; snap.keyConf = 1;
+    int nb = (int)lk.chordRoot.size();
+    if (nb > 0) {
+      long long bars = (long long)floor(since / bar); int b = (int)(((lk.nextBar + bars) % nb + nb) % nb);
+      if (lk.chordRoot[b] != linkR || lk.chordType[b] != linkT) {
+        if (linkR >= 0) { linkHist.push_back({linkR, linkT, linkSince, now}); while (linkHist.size() > 16) linkHist.erase(linkHist.begin()); }
+        linkR = lk.chordRoot[b]; linkT = lk.chordType[b]; linkSince = linkAnchor + bars * bar;
+      }
+      snap.chordRoot = linkR; snap.chordType = linkT; snap.chordConf = 1; snap.chordSince = linkSince; snap.history = linkHist;
+    }
+    snap.silence = false;
+    snap.linkFrom = (lk.host.empty() ? lk.from : lk.host) + (lk.lane.empty() ? "" : " · " + lk.lane);
+    snap.linkLoop.clear(); for (size_t i = 0; i < lk.chordName.size(); i++) snap.linkLoop += (i ? " " : "") + lk.chordName[i];
+  }
 }

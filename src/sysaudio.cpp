@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <map>
 
 namespace sysaudio {
 
@@ -55,6 +56,22 @@ std::vector<std::string> sourcePorts(const std::string& name) {
 }
 void setSourcePort(const std::string& name, const std::string& port) { run("pactl set-source-port " + shq(name) + " " + shq(port)); }
 void setDefaultSink(const std::string& name) { run("pactl set-default-sink " + shq(name)); }
+std::string keepCaptureOn(const std::string& source) {
+  std::map<std::string, std::string> names;   // source index -> name
+  { std::istringstream in(run("pactl list short sources")); std::string line;
+    while (std::getline(in, line)) { size_t t1 = line.find('\t'), t2 = line.find('\t', t1 + 1); if (t1 != std::string::npos) names[line.substr(0, t1)] = line.substr(t1 + 1, t2 == std::string::npos ? std::string::npos : t2 - t1 - 1); } }
+  bool there = false; for (auto& n : names) if (n.second == source) there = true;
+  if (!there) return "";                      // nothing to move to (yet)
+  std::string all = run("pactl list source-outputs"), pid = "application.process.id = \"" + std::to_string(getpid()) + "\"", moved;
+  for (size_t pos = all.find("Source Output #"); pos != std::string::npos;) {
+    size_t end = all.find("Source Output #", pos + 1); std::string block = all.substr(pos, end == std::string::npos ? std::string::npos : end - pos); pos = end;
+    size_t s = block.find("\tSource: "); if (block.find(pid) == std::string::npos || s == std::string::npos) continue;
+    std::string id = block.substr(15, block.find('\n') - 15), idx = block.substr(s + 9, block.find('\n', s) - s - 9);
+    std::string cur = names.count(idx) ? names[idx] : idx;
+    if (cur != source) { run("pactl move-source-output " + id + " " + shq(source)); moved = cur; }
+  }
+  return moved;
+}
 std::string defaultSink() { std::string s = run("pactl get-default-sink"); while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back(); return s; }
 
 int headsetMicInserted() {

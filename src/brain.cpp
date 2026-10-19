@@ -140,6 +140,7 @@ std::string Brain::systemPrompt(bool full) const {
 std::string Brain::userPrompt(const Job& j, const Hearing& h) const {
   char buf[512]; std::string u;
   if (!j.steering.empty()) { u += "The humans ask: "; for (size_t i = 0; i < j.steering.size(); i++) u += (i ? "; " : "") + j.steering[i]; u += ".\n"; }
+  if (h.linked) u += "Rap Machine, a beat machine on another handheld, is linked over the network, so these are exact: it plays in " + h.keyName() + " at " + std::to_string((int)lroundf(h.bpm)) + " BPM, its chord loop (one chord a bar) is " + h.linkLoop + ".\n";
   if (h.silence) u += "The room is quiet right now (no one is playing).\n";
   else {
     snprintf(buf, sizeof buf, "Measured in the room: key %s (confidence %d%%), tempo %d BPM (%s, confidence %d%%), energy %d%%, chord now %s%s.\n",

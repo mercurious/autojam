@@ -8,6 +8,7 @@
 #                         in the models directory and the device has 10 GB or more)
 #   AJ_LLM_PORT=8103 AJ_TTS_PORT=8104 AJ_VOICE=name AJ_AUTO=120 (seconds between automatic plans, 0 = only on request)
 #   AJ_SOURCE=<pulse source> AJ_MIDI=auto|none|/dev/snd/midiC1D0
+#   AJ_LINK=47800|off     follow Underground Rap Machine on the LAN (its jam-link beacon: exact tempo, key, chords)
 [ -f /etc/profile ] && . /etc/profile >/dev/null 2>&1
 APP=${AJ_APP:-/storage/apps/autojam}
 LOG=$APP/logs/launch.log
@@ -24,6 +25,7 @@ export AUTOJAM_LLM="http://127.0.0.1:${AJ_LLM_PORT:-8103}" AUTOJAM_TTS="http://1
 [ -n "${AJ_MIDI:-}" ] && export AUTOJAM_MIDI=$AJ_MIDI
 [ -n "${AJ_VOICE:-}" ] && export AUTOJAM_VOICE=$AJ_VOICE
 [ -n "${AJ_AUTO:-}" ] && export AUTOJAM_AUTO=$AJ_AUTO
+[ -n "${AJ_LINK:-}" ] && export AUTOJAM_LINK=$AJ_LINK
 ulimit -c 0     # a crashed server must not leave a multi-GB core file behind
 
 PIDS=""

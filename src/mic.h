@@ -24,7 +24,7 @@ public:
   float level() const { return lvl.load(); }
   ~MicCapture() { stop(); }
 private:
-  std::thread th; std::atomic<bool> run{false}; std::atomic<long long> frames{0}; std::atomic<float> lvl{0};
+  std::thread th, watch; std::atomic<bool> run{false}; std::atomic<long long> frames{0}; std::atomic<float> lvl{0};
 };
 
 // WAV reading (PCM 16/24/32-bit int and 32-bit float, any channels), resampled to 48 kHz mono by linear interpolation

@@ -206,7 +206,8 @@ void Panel::drawHearing() {
   // KEY
   gfx.card(X, 88, CW, 150, "WHAT GEMMA HEARS · KEY", HEAR);
   gfx.text(h.key >= 0 ? h.keyName() : "listening…", X + 20, 118, h.key >= 0 ? FG : MUTED, Gfx::F_BIG);
-  gfx.text("confidence", X + 20, 196, MUTED, Gfx::F_TINY); gfx.meter(X + 110, 200, 220, 10, h.keyConf, HEAR, OFF);
+  if (h.linked) gfx.text("from the link: " + h.linkFrom, X + 20, 196, STEER, Gfx::F_TINY);
+  else { gfx.text("confidence", X + 20, 196, MUTED, Gfx::F_TINY); gfx.meter(X + 110, 200, 220, 10, h.keyConf, HEAR, OFF); if (h.key >= 0) gfx.text("= " + h.relativeName(), X + 340, 196, MUTED, Gfx::F_TINY); }
   if (h.key >= 0 && h.chordRoot >= 0) gfx.text(theory::roman(h.chordRoot, h.chordType, h.key, h.minorKey), X + CW - 24, 118, HEAR, Gfx::F_BIG, 2);
   gfx.text(h.silence ? "the room is quiet" : (h.energy > 0.7f ? "loud" : (h.energy > 0.35f ? "playing" : "soft")), X + CW - 24, 196, MUTED, Gfx::F_TINY, 2);
   // CHORD
@@ -231,7 +232,7 @@ void Panel::drawHearing() {
   char bb[32]; snprintf(bb, sizeof bb, "%d", (int)lroundf(h.bpm)); gfx.text(h.bpm > 0 ? bb : "—", X + 20, 500, h.tempoLocked ? FG : MUTED, Gfx::F_HUGE);
   gfx.text("BPM", X + 20 + gfx.textWidth(h.bpm > 0 ? bb : "—", Gfx::F_HUGE) + 12, 560, MUTED, Gfx::F_LABEL);
   for (int i = 0; i < 4; i++) { bool on = h.lastBeat >= 0 && h.beatInBar == i && (h.time - h.lastBeat) < 0.12; gfx.led(X + 400 + i * 48, 540, 14, on, i == 0 ? PLAY : HEAR); }
-  gfx.text(h.tempoLocked ? "locked onto the room" : "listening for a beat", X + 376, 578, h.tempoLocked ? HEAR : MUTED, Gfx::F_TINY);
+  gfx.text(h.linked ? "linked to Rap Machine" : (h.tempoLocked ? "locked onto the room" : "listening for a beat"), X + 376, 578, h.linked ? STEER : (h.tempoLocked ? HEAR : MUTED), Gfx::F_TINY);
   gfx.meter(X + 376, 604, 220, 10, h.beatConf, HEAR, OFF);
   gfx.text("bar " + std::to_string(b.bar) + " · band beat " + std::to_string(b.beatInBar + 1) + " · " + b.tempoSource, X + 20, 612, MUTED, Gfx::F_TINY);
   // CHROMA

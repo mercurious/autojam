@@ -116,7 +116,7 @@ void Engine::updateClock(int frames) {
 }
 
 void Engine::decideChord() {
-  if (hear.key >= 0 && hear.keyConf > 0.2f) { keyPc = hear.key; mode = hear.minorKey ? 1 : 0; }
+  if (hear.key >= 0 && hear.keyConf > 0.2f) { keyPc = hear.key; mode = hear.mode >= 0 ? hear.mode : (hear.minorKey ? 1 : 0); }
   int r = -1, t = 0;
   if (following) {
     if (hear.chordRoot >= 0 && !hear.silence) { r = hear.chordRoot; t = hear.chordType; lastHeardRoot = r; lastHeardType = t; }

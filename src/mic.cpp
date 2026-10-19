@@ -1,4 +1,5 @@
 #include "mic.h"
+#include "sysaudio.h"
 #include <pulse/simple.h>
 #include <pulse/error.h>
 #include <cstdio>
@@ -29,6 +30,17 @@ bool MicCapture::start(const std::string& src, Sink sink) {
     pa_simple_free(s);
     run = false;
   });
+  // PipeWire can park the stream elsewhere: created while the mic node was gone (another app just let go of it),
+  // it falls back to the default source, which may be a monitor, and records silence while the screen says
+  // "built-in mic". Check after a second, then every 3 s, and put it back.
+  if (!src.empty()) watch = std::thread([this, src]() {
+    for (int t = 0; run.load(); t++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      if (t % 12 != 4) continue;
+      std::string from = sysaudio::keepCaptureOn(src);
+      if (!from.empty()) fprintf(stderr, "mic: the capture was on %s, moved it back to %s\n", from.c_str(), src.c_str());
+    }
+  });
   return true;
 }
 
@@ -54,7 +66,7 @@ bool MicCapture::startWav(const std::string& path, Sink sink, bool realtime, boo
   return true;
 }
 
-void MicCapture::stop() { run = false; if (th.joinable()) th.join(); }
+void MicCapture::stop() { run = false; if (th.joinable()) th.join(); if (watch.joinable()) watch.join(); }
 
 bool readWavMono48k(const std::string& path, std::vector<float>& out, std::string& err) {
   FILE* f = fopen(path.c_str(), "rb"); if (!f) { err = "cannot open " + path; return false; }

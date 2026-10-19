@@ -17,6 +17,9 @@ std::vector<std::string> sourcePorts(const std::string& name);
 void setSourcePort(const std::string& name, const std::string& port);
 void setDefaultSink(const std::string& name);
 std::string defaultSink();
+// Moves this process's capture streams onto `source` when PipeWire has them elsewhere (a stream created while its
+// target was missing falls back to the default source, a monitor even, and stays there). Returns where it was.
+std::string keepCaptureOn(const std::string& source);
 int headsetMicInserted();                           // 1 yes, 0 no, -1 unknown (SW_MICROPHONE_INSERT on the jack's input device)
 // Port of retro-voice-chat's pick_source: USB/Bluetooth first, then the Flip 2 card: 3.5 mm headset if one is in,
 // else the built-in mic when the device tree powers it ("[In] Mic", the ETK path).

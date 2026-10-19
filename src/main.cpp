@@ -10,7 +10,8 @@
 //                                    singer sings it: F.wav sung, F.wav.speech.wav as spoken (no window, no audio)
 //   --no-llm                         no model and voice servers (the band follows the room on its own)
 //   --llm URL --tts URL --source PULSE_SOURCE --sink PULSE_SINK --voice NAME --ears --midi PATH|auto|none --auto SECONDS
-// Env: AUTOJAM_ASSETS, AUTOJAM_DATA (settings), AUTOJAM_LLM, AUTOJAM_TTS, AUTOJAM_SOURCE, AUTOJAM_EARS=1, AUTOJAM_MIDI, AUTOJAM_AUTO
+//   --link PORT|off                  follow Rap Machine's jam-link beacon on the LAN (default UDP 47800)
+// Env: AUTOJAM_ASSETS, AUTOJAM_DATA (settings), AUTOJAM_LLM, AUTOJAM_TTS, AUTOJAM_SOURCE, AUTOJAM_EARS=1, AUTOJAM_MIDI, AUTOJAM_AUTO, AUTOJAM_LINK
 #include <SDL.h>
 #include "analysis.h"
 #include "player.h"
@@ -23,6 +24,7 @@
 #include "json.h"
 #include "http.h"
 #include "singer.h"
+#include "link.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -107,6 +109,7 @@ int main(int argc, char** argv) {
   std::string wav, analyzePath, shot, llm = envOr("AUTOJAM_LLM", "http://127.0.0.1:8103"), tts = envOr("AUTOJAM_TTS", "http://127.0.0.1:8104");
   std::string source = envOr("AUTOJAM_SOURCE", ""), sinkName, voice = envOr("AUTOJAM_VOICE", ""), midiPath = envOr("AUTOJAM_MIDI", "auto"), renderPath;
   bool windowed = false, noLlm = false, ears = envOr("AUTOJAM_EARS", "0") == "1"; int autoSec = atoi(envOr("AUTOJAM_AUTO", "120").c_str()); float seconds = 24; int headless = 0;
+  std::string linkPort = envOr("AUTOJAM_LINK", "47800");
   std::string singText, singOut = "sung.wav", singMelody = "0,2,4,2,0", singKey = "C"; float singBpm = 96;
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i]; auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -114,6 +117,7 @@ int main(int argc, char** argv) {
     else if (a == "--no-llm") noLlm = true; else if (a == "--llm") llm = next(); else if (a == "--tts") tts = next(); else if (a == "--source") source = next(); else if (a == "--sink") sinkName = next();
     else if (a == "--render") renderPath = next(); else if (a == "--seconds") seconds = (float)atof(next().c_str()); else if (a == "--headless") headless = atoi(next().c_str());
     else if (a == "--voice") voice = next(); else if (a == "--ears") ears = true; else if (a == "--midi") midiPath = next(); else if (a == "--auto") autoSec = atoi(next().c_str());
+    else if (a == "--link") linkPort = next();
     else if (a == "--sing") singText = next(); else if (a == "--out") singOut = next(); else if (a == "--melody") singMelody = next(); else if (a == "--key") singKey = next(); else if (a == "--bpm") singBpm = (float)atof(next().c_str());
     else if (a == "--help" || a == "-h") { printf("autojam [--window] [--wav FILE] [--analyze FILE] [--screenshot out.bmp] [--no-llm] [--llm URL] [--tts URL] [--source NAME] [--sink NAME] [--voice NAME] [--ears] [--midi PATH|auto|none] [--auto SECONDS]\n"); return 0; }
   }
@@ -140,6 +144,11 @@ int main(int argc, char** argv) {
     bool ok = writeWavStereo(renderPath, out, 48000); BandState b = engine.state();
     printf("%s %s (%.1f s, peak %.1f dBFS, band ended on %s at %d BPM, bar %d)\n", ok ? "wrote" : "FAILED", renderPath.c_str(), seconds, 20 * log10f(pk + 1e-9f), b.chordRoot >= 0 ? theory::chordName(b.chordRoot, b.chordType).c_str() : "nothing", (int)lroundf(b.bpm), b.bar);
     return ok ? 0 : 1;
+  }
+  JamLink jamLink;
+  if (linkPort != "off" && atoi(linkPort.c_str()) > 0) {
+    if (jamLink.start(atoi(linkPort.c_str()), [&](const LinkInfo& l) { analysis.link(l); })) fprintf(stderr, "jam link: listening on UDP %s\n", linkPort.c_str());
+    else fprintf(stderr, "jam link: UDP %s is taken, not following Rap Machine\n", linkPort.c_str());
   }
   Brain brain; Brain::Options bo; bo.llmUrl = llm; bo.ttsUrl = tts; bo.ears = ears; bo.autoEverySec = autoSec; bo.enabled = !noLlm; bo.voice = voice;
   brain.start(bo, &engine, &analysis);
@@ -170,7 +179,7 @@ int main(int argc, char** argv) {
       BrainState s = brain.state(); BandState b = engine.state(); Hearing h = analysis.get();
       if (!asked && el > 6 && !noLlm) { brain.requestPlan(true); asked = true; printf("[%5.1f] asked Gemma for a full plan (model %s, llm %s, tts %s, %zu voices)\n", el, s.model.c_str(), s.llmOk ? "ok" : "down", s.ttsOk ? "ok" : "down", s.voices.size()); }
       if (s.phase != lastPhase) { printf("[%5.1f] gemma: %s%s\n", el, s.phase.c_str(), s.error.empty() ? "" : (" (" + s.error + ")").c_str()); lastPhase = s.phase; }
-      if ((int)el / 5 != lastPrint) { lastPrint = (int)el / 5; printf("[%5.1f] hear %s %s %d BPM %s | band %s | gemma %s %d tok %.0f s | tts queue %d, peak %.1f dB\n", el, h.keyName().c_str(), h.chordName().c_str(), (int)lroundf(h.bpm), h.tempoLocked ? "locked" : "", engine.describePlaying().c_str(), s.phase.c_str(), s.tokens, s.seconds, s.ttsQueued, 20 * log10f(pk + 1e-9f)); pk = 0; }
+      if ((int)el / 5 != lastPrint) { lastPrint = (int)el / 5; printf("[%5.1f] hear %s %s %d BPM %s | band %s | gemma %s %d tok %.0f s | tts queue %d, peak %.1f dB\n", el, h.keyName().c_str(), h.chordName().c_str(), (int)lroundf(h.bpm), h.linked ? ("linked to " + h.linkFrom).c_str() : (h.tempoLocked ? "locked" : ""), engine.describePlaying().c_str(), s.phase.c_str(), s.tokens, s.seconds, s.ttsQueued, 20 * log10f(pk + 1e-9f)); pk = 0; }
       if (b.plansApplied != lastPlans) { lastPlans = b.plansApplied; const Plan& p = b.plan; printf("[%5.1f] PLAN \"%s\": %s | style %s, feel %s, energy %d, parts %d/%d/%d/%d, motif", el, p.title.c_str(), p.direction.c_str(), p.style.c_str(), p.feel.c_str(), p.energy, p.drums, p.bass, p.keys, p.lead); for (int d : p.motif) printf(" %d", d); printf(", %zu chords, follow %d, swing %d, voice %s\n", p.chords.size(), p.follow, p.swing, p.voice.c_str()); printf("        hears: %s · %s · %s\n        say: %s\n", p.hearGenre.c_str(), p.hearMood.c_str(), p.hearInstruments.c_str(), p.say.c_str()); for (auto& l : p.lyrics) { printf("        lyric: \"%s\" melody", l.text.c_str()); for (int d : l.melody) printf(" %d", d); printf("\n"); } }
       if (b.lyricNow != lastLyric) { lastLyric = b.lyricNow; if (!lastLyric.empty()) printf("[%5.1f] singing: %s\n", el, lastLyric.c_str()); }
     }
