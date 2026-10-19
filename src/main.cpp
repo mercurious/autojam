@@ -6,6 +6,8 @@
 //   autojam --screenshot out.bmp     draw one frame offscreen and save it (with --wav: after hearing the file)
 //   autojam --wav in.wav --render out.wav --seconds N    no window, no audio device: the band plays along to in.wav
 //   autojam --headless N             no window: run N seconds (mic or --wav), ask Gemma, print what happens
+//   autojam --sing "TEXT" --out F.wav [--melody 0,2,4 --key Am --bpm 96 --voice NAME]   Pocket TTS speaks it, the
+//                                    singer sings it: F.wav sung, F.wav.speech.wav as spoken (no window, no audio)
 //   --no-llm                         no model and voice servers (the band follows the room on its own)
 //   --llm URL --tts URL --source PULSE_SOURCE --sink PULSE_SINK --voice NAME --ears --midi PATH|auto|none --auto SECONDS
 // Env: AUTOJAM_ASSETS, AUTOJAM_DATA (settings), AUTOJAM_LLM, AUTOJAM_TTS, AUTOJAM_SOURCE, AUTOJAM_EARS=1, AUTOJAM_MIDI, AUTOJAM_AUTO
@@ -19,6 +21,8 @@
 #include "midi.h"
 #include "sysaudio.h"
 #include "json.h"
+#include "http.h"
+#include "singer.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -57,6 +61,27 @@ static bool writeWavStereo(const std::string& path, const std::vector<float>& in
   fclose(f); return true;
 }
 
+static int singTest(const std::string& tts, const std::string& voice, const std::string& text, const std::string& melody, const std::string& key, float bpm, const std::string& outPath) {
+  json::Value body = json::Value::obj(); body["input"] = json::Value::str(text); if (!voice.empty()) body["voice"] = json::Value::str(voice); body["response_format"] = json::Value::str("pcm");
+  http::Response r;
+  if (!http::Client::request(tts, "POST", "/v1/audio/speech", json::dump(body), r, 3000) || r.status != 200) { fprintf(stderr, "tts: %s\n", r.error.empty() ? ("http " + std::to_string(r.status)).c_str() : r.error.c_str()); return 1; }
+  std::string pcm; for (;;) { std::string p = r.read(60000); if (p.empty()) break; pcm += p; }
+  size_t n = pcm.size() / 2; std::vector<int16_t> s16(n); memcpy(s16.data(), pcm.data(), n * 2);
+  size_t a = 0, b = n; while (a < n && abs(s16[a]) < 180) a++; while (b > a && abs(s16[b - 1]) < 180) b--;   // as the speaker thread trims
+  a = a > 1440 ? a - 1440 : 0; b = std::min(n, b + 1440);
+  SingRequest rq; rq.bpm = bpm; size_t best = 0;
+  for (int i = 0; i < 12; i++) { size_t l = strlen(theory::NOTE_NAMES[i]); if (key.compare(0, l, theory::NOTE_NAMES[i]) == 0 && l > best) { best = l; rq.tonicPc = i; } }
+  if (key.size() > best && key[best] == 'm') rq.mode = std::max(0, theory::modeIndex("aeolian"));
+  for (size_t p = 0; p < melody.size();) { size_t q = melody.find(',', p); if (q == std::string::npos) q = melody.size(); rq.melody.push_back(atoi(melody.substr(p, q - p).c_str())); p = q + 1; }
+  Sung sung; if (b <= a || !sing(&s16[a], (int)(b - a), rq, sung)) { fprintf(stderr, "no syllables found\n"); return 1; }
+  auto stereo = [](const std::vector<float>& m) { std::vector<float> o(m.size() * 2); for (size_t i = 0; i < m.size(); i++) o[2 * i] = o[2 * i + 1] = m[i]; return o; };
+  std::vector<float> spoken; dsp::upsample2x(&s16[a], (int)(b - a), spoken);
+  bool ok = writeWavStereo(outPath, stereo(sung.pcm), 48000) && writeWavStereo(outPath + ".speech.wav", stereo(spoken), 48000);
+  printf("%s: %.2f s from TTS, %d syllables, %.2f s spoken -> %.2f s sung at %.0f BPM, notes", outPath.c_str(), n / 24000.0, sung.syllables, spoken.size() / 48000.0, sung.pcm.size() / 48000.0, bpm);
+  for (auto& nt : sung.notes) printf(" %s@%.2f", theory::midiName(nt.second).c_str(), nt.first / 48000.0);
+  printf("\n"); return ok ? 0 : 1;
+}
+
 static int analyze(const std::string& path) {
   Analysis an; std::vector<float> data; std::string err;
   if (!readWavMono48k(path, data, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
@@ -82,15 +107,18 @@ int main(int argc, char** argv) {
   std::string wav, analyzePath, shot, llm = envOr("AUTOJAM_LLM", "http://127.0.0.1:8103"), tts = envOr("AUTOJAM_TTS", "http://127.0.0.1:8104");
   std::string source = envOr("AUTOJAM_SOURCE", ""), sinkName, voice = envOr("AUTOJAM_VOICE", ""), midiPath = envOr("AUTOJAM_MIDI", "auto"), renderPath;
   bool windowed = false, noLlm = false, ears = envOr("AUTOJAM_EARS", "0") == "1"; int autoSec = atoi(envOr("AUTOJAM_AUTO", "120").c_str()); float seconds = 24; int headless = 0;
+  std::string singText, singOut = "sung.wav", singMelody = "0,2,4,2,0", singKey = "C"; float singBpm = 96;
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i]; auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
     if (a == "--window") windowed = true; else if (a == "--wav") wav = next(); else if (a == "--analyze") analyzePath = next(); else if (a == "--screenshot") shot = next();
     else if (a == "--no-llm") noLlm = true; else if (a == "--llm") llm = next(); else if (a == "--tts") tts = next(); else if (a == "--source") source = next(); else if (a == "--sink") sinkName = next();
     else if (a == "--render") renderPath = next(); else if (a == "--seconds") seconds = (float)atof(next().c_str()); else if (a == "--headless") headless = atoi(next().c_str());
     else if (a == "--voice") voice = next(); else if (a == "--ears") ears = true; else if (a == "--midi") midiPath = next(); else if (a == "--auto") autoSec = atoi(next().c_str());
+    else if (a == "--sing") singText = next(); else if (a == "--out") singOut = next(); else if (a == "--melody") singMelody = next(); else if (a == "--key") singKey = next(); else if (a == "--bpm") singBpm = (float)atof(next().c_str());
     else if (a == "--help" || a == "-h") { printf("autojam [--window] [--wav FILE] [--analyze FILE] [--screenshot out.bmp] [--no-llm] [--llm URL] [--tts URL] [--source NAME] [--sink NAME] [--voice NAME] [--ears] [--midi PATH|auto|none] [--auto SECONDS]\n"); return 0; }
   }
   if (!analyzePath.empty()) return analyze(analyzePath);
+  if (!singText.empty()) return singTest(tts, voice, singText, singMelody, singKey, singBpm, singOut);
 
   // settings
   json::Value settings; { std::ifstream f(dataDir() + "/settings.json"); std::stringstream ss; ss << f.rdbuf(); json::parse(ss.str(), settings); }

@@ -18,7 +18,8 @@
 enum Part { P_DRUMS = 0, P_BASS, P_KEYS, P_LEAD, P_VOICE, NUM_PARTS };
 static const char* const PART_NAMES[NUM_PARTS] = {"drums", "bass", "keys", "lead", "voice"};
 
-struct VoiceLine { std::vector<float> pcm; std::vector<int> melody; std::string text; bool sung = true; int verse = 0, of = 1; };   // verse: one per plan, of: its lines
+struct VoiceLine { std::vector<float> pcm; std::vector<int> melody; std::string text; bool sung = true; int verse = 0, of = 1;   // verse: one per plan, of: its lines
+  std::vector<std::pair<int, int>> notes; };   // (sample, MIDI) when the singer already pitched it (no autotune then)
 
 struct Command {
   enum Type { Play, Stop, ApplyPlan, Density, Mute, Volume, Energy, Follow, Resync, Tempo, MicTune, Autotune, Transpose, SkipLine, ClearLines, Style, Feel, Swing, Tap } type;
@@ -70,7 +71,7 @@ private:
   int keysNotes[5] = {-1, -1, -1, -1, -1};
   // voice
   Autotune tuneLine, tuneMic; std::vector<float> micRing; std::atomic<size_t> micW{0}; size_t micR = 0; bool micTune = false; int transpose = 0; float atAmount = 0.9f, atSpeed = 0.35f;
-  std::shared_ptr<const VoiceLine> cur; size_t curPos = 0; bool curActive = false; VoiceLine say; size_t sayPos = 0; bool sayActive = false; int lyricNote = -1;
+  std::shared_ptr<const VoiceLine> cur; size_t curPos = 0, curNote = 0; bool curActive = false; VoiceLine say; size_t sayPos = 0; bool sayActive = false; int lyricNote = -1;
   float level[NUM_PARTS] = {}; float outPeak = 0; int plansApplied = 0; int midiNotes = 0; int midiClockCount = 0;
   bool wantPlay = false;
 

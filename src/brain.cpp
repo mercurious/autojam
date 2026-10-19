@@ -1,6 +1,7 @@
 #include "brain.h"
 #include "json.h"
 #include "http.h"
+#include "singer.h"
 #include <chrono>
 #include <cstring>
 #include <algorithm>
@@ -123,8 +124,8 @@ std::string Brain::systemPrompt(bool full) const {
   if (full) s +=
        "- hear: in a few words each, the genre, the mood and the instruments you believe you hear (from the measurements"
        " and the audio if given).\n"
-       "- lyrics: the verse you sing over the jam, 4 short lines (4 to 9 words, one breath each), each with a melody of 3 "
-       "to 8 scale degrees spread evenly over the line. The verse repeats until you write new lyrics, so make it a song: "
+       "- lyrics: the verse you sing over the jam, 4 short lines (4 to 9 words, one breath each), each with a melody of "
+       "one scale degree per syllable, sung on the beat with the last syllable held. The verse repeats until you write new lyrics, so make it a song: "
        "a hook the humans can sing along to, light rhymes, the mood of the room, original words only, nothing hateful. "
        "Write a new verse when none is being sung, when the humans ask for new lyrics or when the music has moved on; "
        "otherwise give none and your verse goes on.\n"
@@ -186,7 +187,7 @@ std::string Brain::schema(bool full) const {
     hear["properties"] = hp; Value hr = Value::arr(); for (const char* k : {"genre", "mood", "instruments"}) hr.push(Value::str(k)); hear["required"] = hr; add("hear", hear);
     Value lyr = Value::obj(); lyr["type"] = Value::str("array"); lyr["maxItems"] = Value::num(4);
     Value line = Value::obj(); line["type"] = Value::str("object"); Value lp = Value::obj(); lp["text"] = str(64);
-    Value mel = Value::obj(); mel["type"] = Value::str("array"); mel["minItems"] = Value::num(2); mel["maxItems"] = Value::num(8); mel["items"] = intRange(-3, 9); lp["melody"] = mel;
+    Value mel = Value::obj(); mel["type"] = Value::str("array"); mel["minItems"] = Value::num(2); mel["maxItems"] = Value::num(12); mel["items"] = intRange(-3, 9); lp["melody"] = mel;
     line["properties"] = lp; Value lr = Value::arr(); lr.push(Value::str("text")); lr.push(Value::str("melody")); line["required"] = lr; lyr["items"] = line; add("lyrics", lyr);
     add("voice", str(24)); add("say", str(100)); add("title", str(32));
   }
@@ -328,7 +329,13 @@ void Brain::speakerLoop() {
     a = a > 1440 ? a - 1440 : 0; b = std::min(n, b + 1440);
     if (b <= a) continue;
     VoiceLine line; line.text = s.text; line.melody = s.melody; line.sung = s.sung; line.verse = s.verse; line.of = s.of;
-    dsp::upsample2x(&s16[a], (int)(b - a), line.pcm);
+    Sung sung;
+    if (s.sung && engine) {   // sing it in the jam's key and tempo; if no syllables are found, the autotune does what it can
+      BandState band = engine->state(); SingRequest rq; rq.tonicPc = band.key >= 0 ? band.key : 0; rq.mode = band.key >= 0 ? band.mode : 0;
+      rq.bpm = band.bpm > 40 ? band.bpm : 100; rq.melody = s.melody; rq.transpose = band.transpose;
+      if (sing(&s16[a], (int)(b - a), rq, sung)) { line.pcm = std::move(sung.pcm); line.notes = std::move(sung.notes); }
+    }
+    if (line.pcm.empty()) dsp::upsample2x(&s16[a], (int)(b - a), line.pcm);
     if (engine) { if (s.sung) engine->queueLine(std::move(line)); else engine->speakNow(std::move(line)); }
   }
 }

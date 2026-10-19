@@ -276,11 +276,15 @@ void Engine::voiceSample(float& l, float& r) {
         bool whole = (int)verse.size() >= verse[0]->of; size_t i = versePos % verse.size();
         if (bar < lyricEndBar || bar - lyricEndBar >= (whole ? (i == 0 ? 2 : 0) : 4)) { next = verse[i]; versePos++; }
       }
-      if (next) { cur = next; curPos = 0; curActive = true; lyricBar = bar; }
+      if (next) { cur = next; curPos = 0; curNote = 0; curActive = true; lyricBar = bar; }
     }
   }
   if (curActive) {
-    if (curPos < cur->pcm.size()) {
+    if (curPos < cur->pcm.size() && !cur->notes.empty()) {    // sung by the singer: on pitch already
+      while (curNote + 1 < cur->notes.size() && (size_t)cur->notes[curNote + 1].first <= curPos) curNote++;
+      lyricNote = cur->notes[curNote].first <= (int)curPos ? cur->notes[curNote].second : -1;
+      v += cur->pcm[curPos++] * 1.3f;
+    } else if (curPos < cur->pcm.size()) {
       float s = cur->pcm[curPos++];
       float forced = -1;
       if (!cur->melody.empty() && cur->sung) {
