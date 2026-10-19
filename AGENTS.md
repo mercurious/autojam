@@ -35,4 +35,4 @@ and messages; `pre-push` checks every outgoing commit. Never pass `--no-verify` 
   publishing a release are the operator's actions: prepare the command, hand it over.
 - The listener has a ground truth: `tools/test_analysis.sh` must pass before a change to
   `src/analysis.cpp` is done.
-- Nothing here contacts the ETK rig (`SM8250.local`); the test card is `flip2-12g`.
+- `etk-rig` (`SM8250.local`) is the 8GB version; `flip2-12g` is the 12GB visionox version.
