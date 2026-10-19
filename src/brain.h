@@ -53,6 +53,7 @@ private:
   std::string systemPrompt(bool full) const;
   std::string userPrompt(const Job& j, const Hearing& h) const;
   std::string schema(bool full) const;
+  std::string grammar(bool full) const;     // schema(full) as compact GBNF
   std::string clipWavBase64() const;
   static bool parsePlan(const json::Value& v, Plan& p, bool full);
 };

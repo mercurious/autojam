@@ -84,7 +84,8 @@ it follows the beat and the chord the listener hears, and never waits for the mo
   each with a melody as scale degrees (or none, to keep the current verse), the voice, a spoken sentence and a title.
 - A **quick plan** (about 150 tokens) after any steering press, honouring the request in the numbers.
 
-Plans are JSON constrained by a schema (llama.cpp's `json_schema`), so they always parse. They are applied on
+Plans are JSON constrained by a schema, sent as a compact GBNF grammar (no whitespace, so plans stay short
+and never run into the token limit), so they always parse. They are applied on
 the next bar. Lyrics go to Pocket TTS line by line; each line starts on a bar and is sung through the tuner,
 forced onto its melody in the key of the jam, so spoken TTS comes out sung. The verse repeats, with a two-bar breath
 between rounds, until Gemma writes a new one, so a song keeps going between plans.

@@ -194,6 +194,34 @@ std::string Brain::schema(bool full) const {
   return json::dump(root);
 }
 
+// The plan schema as a compact GBNF grammar: llama.cpp's json_schema grammar lets the model indent, and with the
+// audio clip in the prompt Gemma pretty-prints (one number a line, 400 to 700+ tokens, cut off at max_tokens).
+// Here there is no whitespace at all and the keys come in the schema's order.
+static std::string gbnfLit(const std::string& t) { std::string o = "\""; for (char c : t) { if (c == '"' || c == '\\') o += '\\'; o += c; } return o + "\""; }
+static std::string gbnf(const json::Value& s) {
+  if (const json::Value* e = s.get("enum")) { std::string o = "("; for (size_t i = 0; i < e->a.size(); i++) o += (i ? " | " : "") + gbnfLit("\"" + e->a[i].s + "\""); return o + ")"; }
+  std::string t = s.strOr("type", "");
+  if (t == "integer") { int lo = s.intOr("minimum", 0), hi = s.intOr("maximum", 9); std::string o = "("; for (int i = lo; i <= hi; i++) o += (i > lo ? " | " : "") + gbnfLit(std::to_string(i)); return o + ")"; }
+  if (t == "boolean") return "(\"true\" | \"false\")";
+  if (t == "string") return "\"\\\"\" char{0," + std::to_string(s.intOr("maxLength", 64)) + "} \"\\\"\"";
+  if (t == "array") {
+    int lo = s.intOr("minItems", 0), hi = s.intOr("maxItems", 8); std::string it = s.get("items") ? gbnf(*s.get("items")) : "\"null\"";
+    std::string items = it + " (\",\" " + it + "){" + std::to_string(std::max(0, lo - 1)) + "," + std::to_string(std::max(0, hi - 1)) + "}";
+    return "\"[\" (" + items + ")" + (lo > 0 ? "" : "?") + " \"]\"";
+  }
+  if (t == "object") {
+    std::string o = "\"{\""; const json::Value* props = s.get("properties"); const auto& req = s.arrOf("required");
+    for (size_t i = 0; i < req.size(); i++) { const json::Value* v = props ? props->get(req[i].s.c_str()) : nullptr; o += " " + gbnfLit(std::string(i ? "," : "") + "\"" + req[i].s + "\":") + " " + (v ? gbnf(*v) : "\"null\""); }
+    return o + " \"}\"";
+  }
+  return "\"null\"";
+}
+
+std::string Brain::grammar(bool full) const {
+  json::Value sch; json::parse(schema(full), sch);
+  return "root ::= " + gbnf(sch) + "\n" R"(char ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4}))" "\n";
+}
+
 static std::string base64(const std::string& in) {
   static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   std::string out; size_t i = 0; unsigned char a3[3]; unsigned char a4[4];
@@ -252,7 +280,7 @@ bool Brain::plan(const Job& j) {
   msgs.push(usr);
   body["messages"] = msgs; body["stream"] = Value::boolean(true); body["temperature"] = Value::num(0.8); body["top_p"] = Value::num(0.95);
   body["max_tokens"] = Value::num(j.full ? 700 : 260);
-  Value rf = Value::obj(); rf["type"] = Value::str("json_schema"); Value js = Value::obj(); js["name"] = Value::str("plan"); Value sch; json::parse(schema(j.full), sch); js["schema"] = sch; rf["json_schema"] = js; body["response_format"] = rf;
+  body["grammar"] = Value::str(grammar(j.full));
   Value kw = Value::obj(); kw["enable_thinking"] = Value::boolean(false); body["chat_template_kwargs"] = kw;
   double t0 = nowS();
   { std::lock_guard<std::mutex> g(mu); st.phase = ears ? "listening (audio to Gemma)" : "prompt"; st.tokens = 0; st.seconds = 0; st.error.clear(); }
